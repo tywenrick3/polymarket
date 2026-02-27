@@ -2,8 +2,6 @@
 
 A terminal interface for browsing [Polymarket](https://polymarket.com) prediction markets. Read-only, no API key or account required.
 
-Inspired by [@karpathy's tweet](https://x.com/karpathy/status/2026360908398862478) — CLIs are agent-native interfaces.
-
 ---
 
 ## Installation
@@ -11,12 +9,10 @@ Inspired by [@karpathy's tweet](https://x.com/karpathy/status/202636090839886247
 Requires Python 3.11+.
 
 ```bash
-git clone <repo>
+git clone https://github.com/tywenrick3/polymarket.git
 cd polymarket
 pip3 install -e .
 ```
-
-Verify it works:
 
 ```bash
 polymarket --help
