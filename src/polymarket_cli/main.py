@@ -4,6 +4,7 @@ from polymarket_cli.commands.dashboard import dashboard
 from polymarket_cli.commands.markets import markets
 from polymarket_cli.commands.market import market
 from polymarket_cli.commands.search import search
+from polymarket_cli.commands.recommend import recommend
 
 app = typer.Typer(
     name="polymarket",
@@ -16,6 +17,7 @@ app.command("dashboard", help="Top markets dashboard with 24hr changes")(dashboa
 app.command("markets", help="List markets sorted by volume")(markets)
 app.command("market", help="Detail view for a single event")(market)
 app.command("search", help="Search active markets by title")(search)
+app.command("recommend", help="Surface the best momentum trade signal")(recommend)
 
 
 if __name__ == "__main__":
