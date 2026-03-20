@@ -15,7 +15,14 @@ polymarket markets --sort volume_24hr --limit 5
 polymarket market <slug>          # detail view for a single event
 polymarket market who-will-trump-nominate-as-fed-chair
 polymarket search "NBA 2026"      # search active markets by title
-python3 recommend.py              # momentum-based single trade recommendation
+polymarket recommend              # composite trade signals (momentum + SMA + mean-reversion)
+polymarket recommend -s momentum --top 5    # single strategy, top 5
+polymarket recommend -s sma -n 3            # SMA crossover only
+polymarket recommend -s mean-reversion      # mean-reversion only
+polymarket recommend --limit 50             # scan more markets
+polymarket backtest                         # backtest all strategies (~28 days data)
+polymarket backtest -s momentum --horizon 6 # single strategy, 6hr lookahead
+polymarket backtest --limit 30 --step 3     # more markets, finer granularity
 ```
 
 All commands output **JSON automatically when piped** (agent/script friendly):
@@ -31,11 +38,18 @@ pip3 install -e .          # install (already done — binary is at /Library/Fra
 pip3 install -e ".[dev]"   # install with dev deps if added later
 ```
 
-No tests yet. To smoke-test after changes:
+```bash
+pytest tests/                    # run unit tests (strategies use synthetic data, no network)
+```
+
+To smoke-test after changes:
 ```bash
 polymarket markets --limit 3 --format json
 polymarket market who-will-trump-nominate-as-fed-chair --no-deltas
 polymarket search "bitcoin" --limit 3
+polymarket recommend -s momentum --top 3 --format json
+polymarket recommend -s composite --top 3 --format json
+polymarket backtest --limit 5 --format json
 ```
 
 ## Architecture
@@ -46,17 +60,28 @@ src/polymarket_cli/
 ├── models.py            # Event, Market, Outcome dataclasses
 ├── api/
 │   ├── gamma.py         # Gamma API client (market data, no auth)
-│   └── clob.py          # CLOB client (price history for 24hr deltas)
+│   └── clob.py          # CLOB client (price history, batch series, 24hr deltas)
 ├── commands/
 │   ├── dashboard.py     # polymarket dashboard
 │   ├── markets.py       # polymarket markets
 │   ├── market.py        # polymarket market <slug>
-│   └── search.py        # polymarket search <query>
+│   ├── search.py        # polymarket search <query>
+│   ├── recommend.py     # polymarket recommend (multi-strategy signals)
+│   ├── backtest.py      # polymarket backtest (replay history, measure accuracy)
+│   └── whales.py        # polymarket whales
+├── strategies/
+│   ├── base.py          # TradeSignal dataclass + Strategy protocol
+│   ├── momentum.py      # linear regression slope + R² trend quality
+│   ├── sma.py           # 6hr/24hr SMA crossover with volatility normalization
+│   ├── mean_reversion.py # z-score vs 72hr rolling mean, speed-penalized
+│   └── composite.py     # weighted ensemble, agreement-based ranking
 └── display/
     ├── tables.py        # rich table builders (dashboard, markets, event detail)
     └── format.py        # number formatters ($1.2M, 94¢, ▲0.4)
 
-recommend.py             # standalone trade recommender script (momentum signal)
+tests/
+└── test_strategies.py   # unit tests with synthetic price series
+
 DESIGN.md                # full design doc with API notes and trade-offs
 ```
 
@@ -80,6 +105,11 @@ GET /prices-history?market={token_id}&interval=1d&fidelity=60
 ```
 Returns `{history: [{t: unix_ts, p: price}, ...]}`. Delta = last.p - first.p.
 
+Available intervals and what they return (fidelity=60, hourly points):
+- `1d` → ~24 points (24hr) — used by dashboard deltas
+- `1w` → ~166 points (7 days) — used by recommend strategies
+- `max` → ~669 points (28 days) — used by backtest
+
 ## Key implementation notes
 
 **Group events** (e.g. "Who wins the 2028 election?"): each candidate is a separate
@@ -99,6 +129,15 @@ always JSON. When in a terminal, output is rich tables.
 **Price delta fetch**: `clob.py` batches all CLOB price-history requests concurrently
 using `asyncio.gather` with a semaphore of 20. Only fetches for the first 5 outcomes
 per event to keep the dashboard fast (~3-5s for 10 markets).
+
+**Strategy system**: `strategies/` implements a pluggable strategy protocol. Each
+strategy takes an Event, Outcome, and price series, and returns a `TradeSignal` with
+direction (BUY/SELL), confidence (0-1), score, and human-readable rationale.
+- **Momentum**: linear regression slope over 24hr window. R² measures trend cleanliness.
+- **SMA**: 6hr vs 24hr simple moving average crossover. Gap normalized by volatility (σ).
+- **Mean reversion**: z-score vs 72hr rolling mean. Penalizes fast moves (likely news).
+- **Composite**: runs all three, ranks by confidence × agreement count. Requires ≥2
+  strategies to agree for high-confidence signals.
 
 ## Data model
 

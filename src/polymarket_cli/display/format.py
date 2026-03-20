@@ -43,6 +43,13 @@ def fmt_volume_delta(usd: float) -> tuple[str, str]:
     return f"{sign}{fmt_volume(abs(usd))}", style
 
 
+def fmt_address(addr: str) -> str:
+    """Shorten a wallet address: 0x1234…abcd."""
+    if len(addr) > 12:
+        return f"{addr[:6]}…{addr[-4:]}"
+    return addr
+
+
 def truncate(text: str, width: int) -> str:
     """Truncate text to width with ellipsis."""
     if len(text) <= width:

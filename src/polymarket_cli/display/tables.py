@@ -16,6 +16,7 @@ from polymarket_cli.display.format import (
     fmt_price,
     fmt_delta,
     fmt_volume_delta,
+    fmt_address,
     truncate,
 )
 
@@ -227,6 +228,54 @@ def render_event(event: Event) -> None:
             console.print(tbl)
 
     console.print()
+
+
+# ---------------------------------------------------------------------------
+# Whales
+# ---------------------------------------------------------------------------
+
+def render_whales(title: str, trades: list) -> None:
+    console.print()
+    console.print(
+        Panel(
+            f"[bold white]{title}[/bold white]  [dim]· whale activity[/dim]",
+            style="cyan",
+            expand=False,
+        )
+    )
+    console.print()
+
+    table = Table(
+        box=box.SIMPLE_HEAD,
+        show_header=True,
+        header_style="bold dim",
+        pad_edge=True,
+        expand=False,
+        show_edge=False,
+    )
+
+    table.add_column("#",       style="dim", width=3,  justify="right", no_wrap=True)
+    table.add_column("Wallet",               width=12,                   no_wrap=True)
+    table.add_column("Side",                 width=4,                    no_wrap=True)
+    table.add_column("Outcome",              width=20,                   no_wrap=True)
+    table.add_column("Volume",  justify="right", width=10,              no_wrap=True)
+    table.add_column("Trades",  justify="right", width=6,               no_wrap=True)
+
+    for rank, t in enumerate(trades, 1):
+        side_style = "green" if t.side == "BUY" else "red"
+        table.add_row(
+            str(rank),
+            fmt_address(t.address),
+            Text(t.side, style=side_style),
+            truncate(t.outcome_name, 20),
+            fmt_volume(t.usd_amount),
+            str(t.num_trades),
+        )
+
+    console.print(table)
+    console.print(
+        "  [dim]On-chain orderbook data · volume in USDC[/dim]\n"
+    )
 
 
 def _outcome_table() -> Table:

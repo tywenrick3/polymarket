@@ -1,4 +1,8 @@
-"""Polymarket Gamma API client — public read-only market data."""
+"""Polymarket Gamma API client — public read-only market data.
+
+All public functions check the local SQLite cache before hitting the network.
+Event metadata is stored as raw JSON for lossless roundtripping.
+"""
 
 import json
 import asyncio
@@ -7,6 +11,17 @@ from typing import Any
 import httpx
 
 from polymarket_cli.models import Event, Market, Outcome
+from polymarket_cli.cache import (
+    get_connection,
+    ensure_schema,
+    get_cached_events,
+    store_events,
+    get_cached_event_by_slug,
+    store_event,
+    TTL_EVENTS_LIST,
+    TTL_EVENT_DETAIL,
+    TTL_SEARCH,
+)
 
 GAMMA_BASE = "https://gamma-api.polymarket.com"
 
@@ -82,6 +97,16 @@ async def fetch_top_events(
     sort: str = "volume_24hr",
 ) -> list[Event]:
     """Fetch top events sorted by the given field."""
+    source_key = f"gamma:top_events:{sort}:{limit}"
+
+    conn = get_connection()
+    ensure_schema(conn)
+
+    cached = get_cached_events(conn, source_key)
+    if cached is not None:
+        conn.close()
+        return [_parse_event(e) for e in cached]
+
     order = SORT_FIELDS.get(sort, "volume24hr")
     params = {
         "active": "true",
@@ -94,40 +119,77 @@ async def fetch_top_events(
         resp = await client.get(f"{GAMMA_BASE}/events", params=params)
         resp.raise_for_status()
         data = resp.json()
+
+    store_events(conn, source_key, data, TTL_EVENTS_LIST)
+    conn.close()
+
     return [_parse_event(e) for e in data]
 
 
 async def fetch_event_by_slug(slug: str) -> Event | None:
     """Fetch a single event by its slug."""
+    conn = get_connection()
+    ensure_schema(conn)
+
+    cached = get_cached_event_by_slug(conn, slug)
+    if cached is not None:
+        conn.close()
+        return _parse_event(cached)
+
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.get(f"{GAMMA_BASE}/events/slug/{slug}")
         if resp.status_code == 404:
+            conn.close()
             return None
         resp.raise_for_status()
         data = resp.json()
+
     # endpoint returns a single object or list
     if isinstance(data, list):
-        return _parse_event(data[0]) if data else None
-    return _parse_event(data)
+        if not data:
+            conn.close()
+            return None
+        raw = data[0]
+    else:
+        raw = data
+
+    store_event(conn, slug, raw, TTL_EVENT_DETAIL)
+    conn.close()
+
+    return _parse_event(raw)
 
 
 async def search_events(query: str, limit: int = 10) -> list[Event]:
     """Client-side title search across active events (fetches top 500 by volume)."""
-    params = {
-        "active": "true",
-        "closed": "false",
-        "order": "volume",
-        "ascending": "false",
-        "limit": "500",
-    }
-    async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.get(f"{GAMMA_BASE}/events", params=params)
-        resp.raise_for_status()
-        data = resp.json()
+    source_key = f"gamma:search:{limit}"
+
+    conn = get_connection()
+    ensure_schema(conn)
+
+    # Cache the underlying 500-event fetch, not the filtered results
+    cached = get_cached_events(conn, source_key)
+    if cached is not None:
+        conn.close()
+        all_events = cached
+    else:
+        params = {
+            "active": "true",
+            "closed": "false",
+            "order": "volume",
+            "ascending": "false",
+            "limit": "500",
+        }
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(f"{GAMMA_BASE}/events", params=params)
+            resp.raise_for_status()
+            all_events = resp.json()
+
+        store_events(conn, source_key, all_events, TTL_SEARCH)
+        conn.close()
 
     terms = query.lower().split()
     matches = []
-    for raw in data:
+    for raw in all_events:
         title = raw.get("title", "").lower()
         if all(term in title for term in terms):
             matches.append(_parse_event(raw))
